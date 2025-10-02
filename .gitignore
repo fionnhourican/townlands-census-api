@@ -1,0 +1,43 @@
+### Maven ###
+target/
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.properties
+# Optional: ignore other .mvn files
+.mvn/*
+!.mvn/wrapper/
+
+### Logs ###
+*.log
+logs/
+log/
+
+### IntelliJ IDEA ###
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+### Eclipse ###
+.project
+.classpath
+.settings/
+bin/
+
+### VS Code ###
+.vscode/
+
+### OS-specific ###
+.DS_Store
+Thumbs.db
+
+### Temporary files ###
+*.swp
+*.swo
+*.tmp
+*.bak
+
+### Spring Boot runtime DBs (H2, Derby, etc.) ###
+*.h2.db
+*.mv.db
+*.db
