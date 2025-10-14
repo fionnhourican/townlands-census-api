@@ -9,8 +9,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
+
 import org.springframework.web.bind.annotation.RestController;
 
+import jakarta.annotation.PostConstruct;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
@@ -20,52 +22,63 @@ import java.util.Map;
 public class CensusGeoController {
 
     private final ObjectMapper mapper = new ObjectMapper();
+    private ObjectNode baseGeoJson;
+    private ArrayNode censusRecords;
+    private Map<String, String> townlandToDed;
 
-    @GetMapping(value = "/census-geo", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<String> getCensusGeo() throws Exception {
-
-        // 1. Load the JSON file you downloaded from the API
-        InputStream censusStream = new ClassPathResource("/data/census-records.json").getInputStream();
-        JsonNode censusRoot = mapper.readTree(censusStream);
-        ArrayNode results = (ArrayNode) censusRoot.get("results");
-
-        // 2. Count people per townland+DED combination
-        Map<String, Long> counts = new HashMap<>();
-        for (JsonNode record : results) {
-            String townland = record.get("townland").asText().toUpperCase().trim();
-            String ded = record.get("ded").asText();
-            String key = townland + "|" + ded;
-            counts.put(key, counts.getOrDefault(key, 0L) + 1);
-        }
-
-        // 3. Load DED boundaries
+    @PostConstruct
+    public void initializeCache() throws Exception {
+        // Cache static geo data
         InputStream dedStream = new ClassPathResource("/data/Census_1911_DED_generalised20m.json").getInputStream();
         JsonNode dedGeoJson = mapper.readTree(dedStream);
         ArrayNode dedFeatures = (ArrayNode) dedGeoJson.get("features");
 
-        // 4. Load townlands GeoJSON
         InputStream geoStream = new ClassPathResource("/data/Longford_Townlands.json").getInputStream();
-        ObjectNode geojson = (ObjectNode) mapper.readTree(geoStream);
-        ArrayNode features = (ArrayNode) geojson.get("features");
+        baseGeoJson = (ObjectNode) mapper.readTree(geoStream);
+        ArrayNode features = (ArrayNode) baseGeoJson.get("features");
 
-        // 5. Attach population counts and find DED using spatial lookup
+        townlandToDed = new HashMap<>();
         for (JsonNode feature : features) {
             ObjectNode props = (ObjectNode) feature.get("properties");
             String name = props.get("ENG_NAME_VALUE").asText().toUpperCase().trim();
             
-            // Get townland centroid
             double[] centroid = getCentroid(feature.get("geometry"));
             String ded = findDEDForPoint(centroid[0], centroid[1], dedFeatures);
             
-            // Create key matching census data format
-            String key = name + "|" + ded;
-            long count = counts.getOrDefault(key, 0L);
-            
-            props.put("population_count", count);
+            townlandToDed.put(name, ded);
             props.put("ded", ded);
         }
 
-        return ResponseEntity.ok(mapper.writeValueAsString(geojson));
+        // Cache census records for filtering
+        InputStream censusStream = new ClassPathResource("/data/census-records.json").getInputStream();
+        JsonNode censusRoot = mapper.readTree(censusStream);
+        censusRecords = (ArrayNode) censusRoot.get("results");
+    }
+
+    @GetMapping(value = "/census-geo", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> getCensusGeo() throws Exception {
+        
+        Map<String, Long> counts = new HashMap<>();
+        for (JsonNode record : censusRecords) {
+            String townland = record.get("townland").asText().toUpperCase().trim();
+            String ded = townlandToDed.getOrDefault(townland, "UNKNOWN");
+            String key = townland + "|" + ded;
+            counts.put(key, counts.getOrDefault(key, 0L) + 1);
+        }
+
+        ObjectNode result = baseGeoJson.deepCopy();
+        ArrayNode features = (ArrayNode) result.get("features");
+        
+        for (JsonNode feature : features) {
+            ObjectNode props = (ObjectNode) feature.get("properties");
+            String name = props.get("ENG_NAME_VALUE").asText().toUpperCase().trim();
+            String ded = props.get("ded").asText();
+            String key = name + "|" + ded;
+            long count = counts.getOrDefault(key, 0L);
+            props.put("population_count", count);
+        }
+
+        return ResponseEntity.ok(mapper.writeValueAsString(result));
     }
 
     private double[] getCentroid(JsonNode geometry) {
